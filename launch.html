@@ -171,30 +171,31 @@ function launch() {
            return ec2.describeSecurityGroups({GroupNames: ["jupyter"] }).promise().then(arg=>{
               console.log("Found jupyter ",arg)
               return Promise.resolve({})
-           })
-         }).catch(arg => {
-           console.log("no jupyter",arg)
-           var params={ 
-              Description: 'Includes jupyter port', 
-              GroupName: 'jupyter'
-           }
-           document.aws.status.value="Creating jupyter security group"
-           return ec2.createSecurityGroup(params).promise().then(arg=>{
-              console.log("Creating ingress rules")
-              var ingressparams={
-                GroupName: 'jupyter',
-                IpPermissions:[ 
-                  {IpProtocol:"tcp",FromPort:"22",ToPort:"22",IpRanges: [{CidrIp:"0.0.0.0/0"}]},
-                  {IpProtocol:"tcp",FromPort:"8888",ToPort:"8888",IpRanges: [{CidrIp:"0.0.0.0/0"}]},
-                ],
-              }
-              document.aws.status.value="Creating jupyter ingress"
-              return ec2.authorizeSecurityGroupIngress(ingressparams).promise()
+           }).catch(arg => {
+             console.log("no jupyter",arg)
+             var params={ 
+                Description: 'Includes jupyter port', 
+                GroupName: 'jupyter'
+             }
+             document.aws.status.value="Creating jupyter security group"
+             return ec2.createSecurityGroup(params).promise().then(arg=>{
+                console.log("Creating ingress rules")
+                var ingressparams={
+                  GroupName: 'jupyter',
+                  IpPermissions:[ 
+                    {IpProtocol:"tcp",FromPort:"22",ToPort:"22",IpRanges: [{CidrIp:"0.0.0.0/0"}]},
+                    {IpProtocol:"tcp",FromPort:"8888",ToPort:"8888",IpRanges: [{CidrIp:"0.0.0.0/0"}]},
+                  ],
+                }
+                document.aws.status.value="Creating jupyter ingress"
+                return ec2.authorizeSecurityGroupIngress(ingressparams).promise()
+             })
            })
          }).then(arg=>{
            console.log("Got security group",arg)
            document.aws.status.value="Lookup Price History"
-           return ec2.describeSpotPriceHistory({AvailabilityZone:document.aws.availabilityzone.value,InstanceTypes:[instancetype]}).promise()
+           return ec2.describeSpotPriceHistory({AvailabilityZone:document.aws.availabilityzone.value,
+              InstanceTypes:[instancetype],  ProductDescriptions: ["Linux/UNIX (Amazon VPC)"],}).promise()
          }).then(arg=>{
            console.log("Got price history",arg)
            document.aws.spotpricehistory.value= "last price was: "+arg.SpotPriceHistory[0].SpotPrice    
