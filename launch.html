@@ -30,6 +30,7 @@ window.onload = function() {
     if (urlParams.secretAccessKey) {document.aws.secretAccessKey.value=urlParams.secretAccessKey}
     if (urlParams.volumeid) {document.aws.volumeid.value=urlParams.volumeid}
     if (urlParams.availabilityzone) {document.aws.availabilityzone.value=urlParams.availabilityzone}
+    if (urlParams.keyname) {document.aws.keyname.value=urlParams.keyname}
 };
 
 
@@ -96,6 +97,17 @@ if grep -q '^overlayroot=""' /etc/overlayroot.conf ; then
 fi
 
 `
+
+function bookmark() {
+    var url=window.location.pathname+"\?"
+    url += "accessKeyId="+encodeURIComponent(document.aws.accessKeyId.value)
+    url += "&secretAccessKey="+encodeURIComponent(document.aws.secretAccessKey.value)
+    url += "&volumeid="+encodeURIComponent(document.aws.volumeid.value)
+    url += "&availabilityzone="+encodeURIComponent(document.aws.availabilityzone.value)
+    url += "&keyname="+encodeURIComponent(document.aws.keyname.value)
+    document.getElementById("bookmark").href=url;
+    document.getElementById("bookmarkdiv").style.display = "block";  
+}
 function launch() {
       var userdata64=btoa(userdata)
       options()
@@ -104,7 +116,6 @@ function launch() {
       LaunchSpecification: {
        "ImageId": ImageId,
        "InstanceType": instancetype,
-       "KeyName": document.aws.keyname.value,
        Placement: {
         AvailabilityZone: document.aws.availabilityzone.value
        },
@@ -126,26 +137,43 @@ function launch() {
       SpotPrice: document.aws.spotprice.value, 
       Type: "one-time",
     }
-
-    var url=window.location.pathname+"\?"
-    url += "accessKeyId="+encodeURIComponent(document.aws.accessKeyId.value)
-    url += "&secretAccessKey="+encodeURIComponent(document.aws.secretAccessKey.value)
-    url += "&volumeid="+encodeURIComponent(document.aws.volumeid.value)
-    url += "&availabilityzone="+encodeURIComponent(document.aws.availabilityzone.value)
-    document.getElementById("bookmark").href=url;
-    document.getElementById("bookmarkdiv").style.display = "block";
+    if (document.aws.keyname.value!="") {spotrequest.LaunchSpecification.KeyName=document.aws.keyname.value}
+    console.log("spot request=",spotrequest)
+    bookmark()
     var workflow={}
     // Create a new security group.
     try {
          var workflow={}
          workflow.imageid=document.aws.imageid.value
+
          var ec2=new AWS.EC2(options())
-         document.aws.status.value="Lookup jupyter security group"
-         return ec2.describeSecurityGroups({GroupNames: ["jupyter"] }).promise().then(arg=>{
-           console.log("Found jupyter ",arg)
-           return Promise.resolve({})
+         return Promise.resolve()
+         .then(arg=>{
+           if(workflow.imageid.startsWith('vol-')) {return Promise.resolve()}
+           var gb=parseFloat(document.aws.volumeid.value)
+           console.log("gb=",gb)
+           if(isNaN(gb)) {
+             throw new Error("Invalid volumeid")
+           } 
+           if(gb>100) {
+             throw new Error("Can only create a volume up to 100gb")
+           } 
+           document.aws.status.value="Create a volume of "+gb+" Gigabytes"
+           return ec2.createVolume({AvailabilityZone: document.aws.availabilityzone.value,
+                VolumeType:"gp2",Size:gb}).promise().then(arg=>{
+                  console.log("back from create volume",arg)
+                  document.aws.volumeid.value=arg.VolumeId
+                  bookmark() //update the bookmark
+                  return Promise.resolve()
+                })
+         }).then(arg=>{
+           document.aws.status.value="Lookup jupyter security group"
+           return ec2.describeSecurityGroups({GroupNames: ["jupyter"] }).promise().then(arg=>{
+              console.log("Found jupyter ",arg)
+              return Promise.resolve({})
+           })
          }).catch(arg => {
-           console.log("no jupyter")
+           console.log("no jupyter",arg)
            var params={ 
               Description: 'Includes jupyter port', 
               GroupName: 'jupyter'
@@ -292,13 +320,14 @@ Jupyter Spot Instance Launcher
   <input type="text" name="volumeid" size="25"><br>
   AvailabilityZone:
   <input type="text" name="availabilityzone"  value='us-west-1a'><br>
+  KeyName:
+  <input type="text" name="keyname"  value=''><br>
   <br>
   AMI ImageId:
   <input type="text" name="imageid" value="ami-c23978a2"><br>
-  KeyName:
-  <input type="text" name="keyname"  value='cs231n'><br>
+
   SpotPrice:
-  <input type="text" name="spotprice" value="0.15"><input type="text" name="spotpricehistory" style="border:none" readonly><br> 
+  <input type="text" name="spotprice" value="0.15"><input type="text" name="spotpricehistory" style="border:none" size="25" readonly><br> 
 <br>
   SpotRequestId:
   <input type="text" name="requestid"><br>
@@ -324,7 +353,7 @@ to your jupyter session.
 <p>
 Jupyter password will be 'eastbayml'
 <p>
-<p>The first time the overlay volume is used, you will need to ssh in to the instance and run the following commands</li>
+<p>The first time the overlay volume is used it must be formated, use jupyter->new->terminal and run the following commands</li>
 <p>
 <code>
 sudo mkfs /dev/xvdb
@@ -339,8 +368,8 @@ sudo reboot
 <p>
 You can bookmark this
 <a id="bookmark" href="">link</a>
-for future launches. 
-<b>It contains your secretAccessKey, so keep it safe.</b>
+for future launches. It includes all the parameters to relaunch this instance.
+<b>However, it contains your secretAccessKey, so keep it safe.</b>
 <br>
 
 </div>
@@ -349,9 +378,8 @@ for future launches.
 <p>
 Before launching the first time, use the AWS console to 
 <li>get your accessKeyId and secretAccessKey (username->my security credentials->Access Keys)</li>
-<li>create a keyname pair named 'cs231n' (ec2->keypairs) </li>
-<li>create an overlay volume (ec2->volumes)</li>
-
+<li>Enter your overlayroot volumeid, or enter the number of gb and a volume will be created for you</li>
+<li>the keyname pair is optional, but is required if you would like to ssh into the instance</li>
 </div>
 
 </body>
