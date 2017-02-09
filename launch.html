@@ -149,10 +149,10 @@ function launch() {
          var ec2=new AWS.EC2(options())
          return Promise.resolve()
          .then(arg=>{
-           if(workflow.imageid.startsWith('vol-')) {return Promise.resolve()}
+           if(document.aws.volumeid.value.startsWith('vol-')) {return Promise.resolve()}
            var gb=parseFloat(document.aws.volumeid.value)
            console.log("gb=",gb)
-           if(isNaN(gb)) {
+           if(isNaN(gb) || gb<1) {
              throw new Error("Invalid volumeid")
            } 
            if(gb>100) {
