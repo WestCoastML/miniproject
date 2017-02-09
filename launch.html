@@ -1,0 +1,358 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<title>AWS SDK for JavaScript - Sample Application</title>
+<script src="https://sdk.amazonaws.com/js/aws-sdk-2.7.20.min.js"></script>
+<script type="text/javascript" src="http://code.jquery.com/jquery.min.js"></script>
+</head>
+<body>
+<script>
+var accessKeyId=""
+var secretAccessKey=''
+var volumeid=""
+var instancetype="g2.2xlarge"
+
+window.onload = function() {
+   var match,
+        pl     = /\+/g,  // Regex for replacing addition symbol with a space
+        search = /([^&=]+)=?([^&]*)/g,
+        decode = function (s) { return decodeURIComponent(s.replace(pl, " ")); },
+        query  = window.location.search.substring(1);
+
+    var urlParams = {};
+    while (match = search.exec(query))
+       urlParams[decode(match[1])] = decode(match[2]);
+       
+    document.aws.accessKeyId.value=accessKeyId
+    document.aws.secretAccessKey.value=secretAccessKey
+    document.aws.volumeid.value=volumeid
+    if (urlParams.accessKeyId) { document.aws.accessKeyId.value=urlParams.accessKeyId}
+    if (urlParams.secretAccessKey) {document.aws.secretAccessKey.value=urlParams.secretAccessKey}
+    if (urlParams.volumeid) {document.aws.volumeid.value=urlParams.volumeid}
+    if (urlParams.availabilityzone) {document.aws.availabilityzone.value=urlParams.availabilityzone}
+};
+
+
+var ImageId=""
+function options(){
+  ImageId=document.aws.imageid.value
+  return {'region':'us-west-1',
+      'accessKeyId': document.aws.accessKeyId.value, 
+      'secretAccessKey': document.aws.secretAccessKey.value};
+}
+
+/*
+# Set options for certfile, ip, password, and toggle off browser auto-opening
+c.NotebookApp.certfile = u'/home/ubuntu/certificate/mycert.pem'
+c.NotebookApp.keyfile = u'/home/ubuntu/certificate/mykey.key'
+# Set ip to '*' to bind on all interfaces (ips) for the public server
+c.NotebookApp.ip = '*'
+c.NotebookApp.password = u'sha1:760820813342:9afca3c346836bf24883dbbd92929da3d2233d92'
+c.NotebookApp.open_browser = False
+# It is a good idea to set a known, fixed port for server access
+*/
+var userdata=
+`#!/bin/bash
+
+CERTIFICATE_DIR="/home/ubuntu/certificate"
+JUPYTER_CONFIG_DIR="/home/ubuntu/.jupyter"
+
+if [ ! -d "$CERTIFICATE_DIR" ]; then
+    mkdir $CERTIFICATE_DIR
+    openssl req -x509 -nodes -days 365 -newkey rsa:1024 -keyout "$CERTIFICATE_DIR/mykey.key" -out "$CERTIFICATE_DIR/mycert.pem" -batch
+    chown -R ubuntu $CERTIFICATE_DIR
+fi
+
+if [ ! -f "$JUPYTER_CONFIG_DIR/jupyter_notebook_config.py" ]; then
+    # generate default config file
+    #jupyter notebook --generate-config
+    mkdir $JUPYTER_CONFIG_DIR
+
+    # append notebook server settings
+    cat <<EOF >> "$JUPYTER_CONFIG_DIR/jupyter_notebook_config.py"
+# Set options for certfile, ip, password, and toggle off browser auto-opening
+c.NotebookApp.certfile = u'$CERTIFICATE_DIR/mycert.pem'
+c.NotebookApp.keyfile = u'$CERTIFICATE_DIR/mykey.key'
+# Set ip to '*' to bind on all interfaces (ips) for the public server
+c.NotebookApp.ip = '*'
+c.NotebookApp.password = u'sha1:a75394206556:4871b058493ec2cbf2020496cb0754b951063eea'
+c.NotebookApp.open_browser = False
+# It is a good idea to set a known, fixed port for server access
+c.NotebookApp.port = 8888
+EOF
+    chown -R ubuntu $JUPYTER_CONFIG_DIR
+fi
+if ! grep -q "jupyter" /etc/rc.local; then
+    sed -i -e '$d' /etc/rc.local
+    echo 'cd /home/ubuntu' >>/etc/rc.local
+    echo 'sudo -H -u ubuntu bash -c "nohup jupyter notebook"&'>>/etc/rc.local
+    echo 'exit 0' >>/etc/rc.local
+fi
+
+if grep -q '^overlayroot=""' /etc/overlayroot.conf ; then 
+   sed -i -e '$d' /etc/overlayroot.conf
+   echo 'overlayroot="/dev/xvdb"' >>/etc/overlayroot.conf
+   reboot
+fi
+
+`
+function launch() {
+      var userdata64=btoa(userdata)
+      options()
+      var spotrequest = {
+      InstanceCount: 1, 
+      LaunchSpecification: {
+       "ImageId": ImageId,
+       "InstanceType": instancetype,
+       "KeyName": document.aws.keyname.value,
+       Placement: {
+        AvailabilityZone: document.aws.availabilityzone.value
+       },
+       BlockDeviceMappings: [
+        {
+          "DeviceName": "/dev/sda1",
+          "Ebs": {
+            "DeleteOnTermination": true,
+            "VolumeType": "gp2",
+            "VolumeSize": 60,
+            "SnapshotId": ""
+          }
+        },
+       ],
+
+       SecurityGroups: [ "jupyter"], 
+       UserData: userdata64,
+      }, 
+      SpotPrice: document.aws.spotprice.value, 
+      Type: "one-time",
+    }
+
+    var url=window.location.pathname+"\?"
+    url += "accessKeyId="+encodeURIComponent(document.aws.accessKeyId.value)
+    url += "&secretAccessKey="+encodeURIComponent(document.aws.secretAccessKey.value)
+    url += "&volumeid="+encodeURIComponent(document.aws.volumeid.value)
+    url += "&availabilityzone="+encodeURIComponent(document.aws.availabilityzone.value)
+    document.getElementById("bookmark").href=url;
+    document.getElementById("bookmarkdiv").style.display = "block";
+    var workflow={}
+    // Create a new security group.
+    try {
+         var workflow={}
+         workflow.imageid=document.aws.imageid.value
+         var ec2=new AWS.EC2(options())
+         document.aws.status.value="Lookup jupyter security group"
+         return ec2.describeSecurityGroups({GroupNames: ["jupyter"] }).promise().then(arg=>{
+           console.log("Found jupyter ",arg)
+           return Promise.resolve({})
+         }).catch(arg => {
+           console.log("no jupyter")
+           var params={ 
+              Description: 'Includes jupyter port', 
+              GroupName: 'jupyter'
+           }
+           document.aws.status.value="Creating jupyter security group"
+           return ec2.createSecurityGroup(params).promise().then(arg=>{
+              console.log("Creating ingress rules")
+              var ingressparams={
+                GroupName: 'jupyter',
+                IpPermissions:[ 
+                  {IpProtocol:"tcp",FromPort:"22",ToPort:"22",IpRanges: [{CidrIp:"0.0.0.0/0"}]},
+                  {IpProtocol:"tcp",FromPort:"8888",ToPort:"8888",IpRanges: [{CidrIp:"0.0.0.0/0"}]},
+                ],
+              }
+              document.aws.status.value="Creating jupyter ingress"
+              return ec2.authorizeSecurityGroupIngress(ingressparams).promise()
+           })
+         }).then(arg=>{
+           console.log("Got security group",arg)
+           document.aws.status.value="Lookup Price History"
+           return ec2.describeSpotPriceHistory({AvailabilityZone:document.aws.availabilityzone.value,InstanceTypes:[instancetype]}).promise()
+         }).then(arg=>{
+           console.log("Got price history",arg)
+           document.aws.spotpricehistory.value= "last price was: "+arg.SpotPriceHistory[0].SpotPrice    
+           console.log("now get ami snapshot")
+           document.aws.status.value="Lookup image"
+           return ec2.describeImages({ImageIds: [workflow.imageid] }).promise()
+         }).then(arg=>{
+           console.log("Got imageid, now request spot instance",arg)
+           workflow.snapshotid=arg.Images[0].BlockDeviceMappings[0].Ebs.SnapshotId
+           spotrequest.LaunchSpecification.BlockDeviceMappings[0].Ebs.SnapshotId=workflow.snapshotid
+           document.aws.status.value="Requesting SpotInstance"
+           return ec2.requestSpotInstances(spotrequest).promise()
+         }).then(arg=>{
+           console.log("Back from request spotinstance",arg)
+           workflow.requestid=arg.SpotInstanceRequests[0].SpotInstanceRequestId
+           workflow.request=arg
+           document.aws.requestid.value=workflow.requestid
+           document.aws.status.value="Waiting for Spot to be fulfilled"
+           return ec2.waitFor('spotInstanceRequestFulfilled',{SpotInstanceRequestIds: [workflow.requestid] }).promise()
+         }).then(arg=>{
+           console.log("Instance fulfilled ",arg)
+           workflow.instanceid=arg.SpotInstanceRequests[0].InstanceId
+           document.aws.instanceid.value=workflow.instanceid
+           document.aws.status.value="Waiting for Spot to exist"
+           return ec2.waitFor('instanceExists',{InstanceIds: [workflow.instanceid] }).promise()
+         }).then(arg=>{
+           console.log("Instance Exists ",arg,workflow)
+           document.aws.status.value="Waiting for instance to be running"
+           return  ec2.waitFor('instanceRunning',{InstanceIds: [workflow.instanceid] }).promise()
+         }).then(arg=>{
+           console.log("Instance running ",arg,workflow)           
+           workflow.volumeid=document.aws.volumeid.value
+           document.aws.status.value="Attaching Volume"
+           return ec2.attachVolume({Device: "/dev/sdb", 
+              InstanceId: workflow.instanceid, 
+              VolumeId: workflow.volumeid,
+            }).promise()
+         }).then(arg=>{
+           console.log("running with volume attached",arg)
+           document.getElementById("prereq").style.display = "none";
+           document.aws.status.value="Waiting instance info"
+           return ec2.describeInstances({Filters:[
+                {Name:"instance-id",Values:[workflow.instanceid]}] }).promise()
+         }).then(arg=>{
+           console.log("found instance ",arg)
+           document.aws.status.value="Instance is available"       
+           var instance = arg.Reservations[0].Instances[0]
+
+           console.log("instance ",instance.InstanceId,
+            instance.BlockDeviceMappings[1].Ebs.VolumeId,
+            instance.BlockDeviceMappings[1].Ebs.Status)
+           document.aws.instanceIP.value=instance.PublicIpAddress
+           var link="https://"+instance.PublicIpAddress+":8888"
+           document.getElementById("jupyterlink").href=link; 
+           document.getElementById("instructions").style.display = "block";
+         }).catch(arg=>{
+           document.aws.status.value=arg.message
+           console.log("Workflow fail ",arg)
+           return
+         })         
+
+    } catch (ase) {
+        console.log("failed to launch ", ase);
+        document.aws.status.value=ase.message
+        if(workflow.requestid) {
+          ec2.cancelSpotInstanceRequests({SpotInstanceRequestIds: [workflow.requestid]}).promise().then(arg=>{
+             console.log("Spot request cancelled ",arg)
+           })
+        }
+        if(workflow.instanceid) {
+          ec2.terminateInstances({InstanceIds: [workflow.instanceid]}).promise().then(arg=>{
+             console.log("Instance Terminate ",arg)
+           })
+        }         
+
+    }
+}
+
+function terminate() {
+    try {
+       var ec2=new AWS.EC2(options())
+       document.aws.status.value="Cancel Request"
+       console.log("Cancel Spot request ")
+       return ec2.cancelSpotInstanceRequests({SpotInstanceRequestIds: [document.aws.requestid.value]}).promise().then(arg=>{
+         console.log("Spot request cancelled ",arg)
+          document.aws.status.value="Cancelled"
+         if (document.aws.instanceid.value != "") {
+           document.aws.status.value="Terminating"
+           console.log("terminate instance")
+           return ec2.terminateInstances({InstanceIds: [document.aws.instanceid.value] }).promise().then(arg=>{
+             console.log("wait for terminate instance")
+             document.aws.status.value="Wait for termination"
+             return ec2.waitFor('instanceTerminated',{InstanceIds: [document.aws.instanceid.value]}).promise().then(arg=>{
+               console.log("terminated instance")
+               document.aws.status.value="Terminated"
+             })
+           })
+         }
+       })
+    } catch (ase) {
+        console.log(ase);
+    }
+
+}
+
+
+
+
+</script>
+<H2>
+EastBayML
+</H2>
+<H2>
+Jupyter Spot Instance Launcher
+</H2>
+<form name="aws">
+<br>
+  accessKeyId:
+  <input type="text" name="accessKeyId" size="25"><br>
+  secretAccessKey:
+  <input type="text" name="secretAccessKey" size="60"><br>
+  VolumeId:
+  <input type="text" name="volumeid" size="25"><br>
+  AvailabilityZone:
+  <input type="text" name="availabilityzone"  value='us-west-1a'><br>
+  <br>
+  AMI ImageId:
+  <input type="text" name="imageid" value="ami-c23978a2"><br>
+  KeyName:
+  <input type="text" name="keyname"  value='cs231n'><br>
+  SpotPrice:
+  <input type="text" name="spotprice" value="0.15"><input type="text" name="spotpricehistory" style="border:none" readonly><br> 
+<br>
+  SpotRequestId:
+  <input type="text" name="requestid"><br>
+  InstanceId:
+  <input type="text" name="instanceid"><br>
+   IP:
+  <input type="text" name="instanceIP"><br>
+   Status:
+  <input type="text" name="status"  size="60" style="border:none" ><br>
+</form>
+<br>
+<button onclick="launch()">Launch</button>
+<button onclick="terminate()">terminate</button>
+<br>
+<div id="instructions" style="display:none;">
+<p>
+The server should be ready in a few minutes.
+<p>
+Follow this  
+<a id="jupyterlink" href="url" target="_blank">link</a>
+to your jupyter session.
+<p>
+<p>
+Jupyter password will be 'eastbayml'
+<p>
+<p>The first time the overlay volume is used, you will need to ssh in to the instance and run the following commands</li>
+<p>
+<code>
+sudo mkfs /dev/xvdb
+<p>
+sudo reboot 
+</code>
+</p>
+</div>
+
+<div id="bookmarkdiv" style="display:none;">
+<br>
+<p>
+You can bookmark this
+<a id="bookmark" href="">link</a>
+for future launches. 
+<b>It contains your secretAccessKey, so keep it safe.</b>
+<br>
+
+</div>
+
+<div id="prereq">
+<p>
+Before launching the first time, use the AWS console to 
+<li>get your accessKeyId and secretAccessKey (username->my security credentials->Access Keys)</li>
+<li>create a keyname pair named 'cs231n' (ec2->keypairs) </li>
+<li>create an overlay volume (ec2->volumes)</li>
+
+</div>
+
+</body>
+</html>
