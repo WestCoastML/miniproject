@@ -6,6 +6,12 @@
 <script type="text/javascript" src="http://code.jquery.com/jquery.min.js"></script>
 </head>
 <body>
+<style>
+#status {
+  float: right;
+  width: 50%;
+}
+</style>
 <script>
 var accessKeyId=""
 var secretAccessKey=''
@@ -86,7 +92,7 @@ fi
 if ! grep -q "jupyter" /etc/rc.local; then
     sed -i -e '$d' /etc/rc.local
     echo 'cd /home/ubuntu' >>/etc/rc.local
-    echo 'sudo -H -u ubuntu bash -c "nohup jupyter notebook"&'>>/etc/rc.local
+    echo 'sudo -H -u ubuntu bash --rcfile /home/ubuntu/.bashrc -ic "nohup jupyter notebook"&'>>/etc/rc.local
     echo 'exit 0' >>/etc/rc.local
 fi
 
@@ -311,13 +317,19 @@ EastBayML
 <H2>
 Jupyter Spot Instance Launcher
 </H2>
+<div id="container">
+<div id="status" style="display:none;" >Status
+<br>
+Stuff here
+</div>
+<div id="content">
 <form name="aws">
 <br>
   accessKeyId:
   <input type="text" name="accessKeyId" size="25"><br>
   secretAccessKey:
-  <input type="text" name="secretAccessKey" size="60"><br>
-  VolumeId:
+  <input type="text" name="secretAccessKey" size="42"><br>
+  Overlayroot VolumeId:
   <input type="text" name="volumeid" size="25"><br>
   AvailabilityZone:
   <input type="text" name="availabilityzone"  value='us-west-1a'><br>
@@ -342,6 +354,11 @@ Jupyter Spot Instance Launcher
 <br>
 <button onclick="launch()">Launch</button>
 <button onclick="terminate()">terminate</button>
+</div>
+
+
+
+
 <br>
 <div id="instructions" style="display:none;">
 <p>
@@ -354,6 +371,9 @@ to your jupyter session.
 <p>
 Jupyter password will be 'eastbayml'
 <p>
+If this is your first time using this volume follow
+<a href="#formatdisk" onclick='document.getElementById("formatdisk").style.display = "block";'>these</a> instructions.
+<div id="formatdisk" style="display:none;">
 <p>The first time the overlay volume is used it must be formated, use jupyter->new->terminal and run the following commands</li>
 <p>
 <code>
@@ -361,6 +381,7 @@ sudo mkfs /dev/xvdb
 <p>
 sudo reboot 
 </code>
+</div>
 </p>
 </div>
 
@@ -370,6 +391,7 @@ sudo reboot
 You can bookmark this
 <a id="bookmark" href="">link</a>
 for future launches. It includes all the parameters to relaunch this instance.
+<br>
 <b>However, it contains your secretAccessKey, so keep it safe.</b>
 <br>
 
@@ -383,5 +405,6 @@ Before launching the first time, use the AWS console to
 <li>the keyname pair is optional, but is required if you would like to ssh into the instance</li>
 </div>
 
+</div>
 </body>
 </html>
