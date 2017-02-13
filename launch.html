@@ -17,6 +17,7 @@ var accessKeyId=""
 var secretAccessKey=''
 var volumeid=""
 var instancetype="g2.2xlarge"
+var instancetypes=[	"c4.large","g2.2xlarge","g2.8xlarge","p2.xlarge","p2.8xlarge","p2.16xlarge"]
 
 window.onload = function() {
    var match,
@@ -43,7 +44,10 @@ window.onload = function() {
 var ImageId=""
 function options(){
   ImageId=document.aws.imageid.value
-  return {'region':'us-west-1',
+  var zone=document.aws.availabilityzone.value
+  zone=zone.substring(0,zone.length-1)
+  console.log("zone=",zone)
+  return {'region':zone,
       'accessKeyId': document.aws.accessKeyId.value, 
       'secretAccessKey': document.aws.secretAccessKey.value};
 }
@@ -144,7 +148,6 @@ function launch() {
       Type: "one-time",
     }
     if (document.aws.keyname.value!="") {spotrequest.LaunchSpecification.KeyName=document.aws.keyname.value}
-    console.log("spot request=",spotrequest)
     bookmark()
     var workflow={}
     // Create a new security group.
@@ -157,7 +160,6 @@ function launch() {
          .then(arg=>{
            if(document.aws.volumeid.value.startsWith('vol-')) {return Promise.resolve()}
            var gb=parseFloat(document.aws.volumeid.value)
-           console.log("gb=",gb)
            if(isNaN(gb) || gb<1) {
              throw new Error("Invalid volumeid")
            } 
@@ -167,25 +169,23 @@ function launch() {
            document.aws.status.value="Create a volume of "+gb+" Gigabytes"
            return ec2.createVolume({AvailabilityZone: document.aws.availabilityzone.value,
                 VolumeType:"gp2",Size:gb}).promise().then(arg=>{
-                  console.log("back from create volume",arg)
                   document.aws.volumeid.value=arg.VolumeId
                   bookmark() //update the bookmark
                   return Promise.resolve()
                 })
          }).then(arg=>{
+           console.log("lookup  jupyter security group",arg)
            document.aws.status.value="Lookup jupyter security group"
            return ec2.describeSecurityGroups({GroupNames: ["jupyter"] }).promise().then(arg=>{
-              console.log("Found jupyter ",arg)
               return Promise.resolve({})
            }).catch(arg => {
-             console.log("no jupyter",arg)
+             console.log("no jupyter security group",arg)
              var params={ 
                 Description: 'Includes jupyter port', 
                 GroupName: 'jupyter'
              }
              document.aws.status.value="Creating jupyter security group"
              return ec2.createSecurityGroup(params).promise().then(arg=>{
-                console.log("Creating ingress rules")
                 var ingressparams={
                   GroupName: 'jupyter',
                   IpPermissions:[ 
@@ -203,7 +203,7 @@ function launch() {
            return ec2.describeSpotPriceHistory({AvailabilityZone:document.aws.availabilityzone.value,
               InstanceTypes:[instancetype],  ProductDescriptions: ["Linux/UNIX (Amazon VPC)"],}).promise()
          }).then(arg=>{
-           console.log("Got price history",arg)
+           console.log("Got price history")
            document.aws.spotpricehistory.value= "last price was: "+arg.SpotPriceHistory[0].SpotPrice    
            console.log("now get ami snapshot")
            document.aws.status.value="Lookup image"
@@ -243,20 +243,7 @@ function launch() {
            console.log("running with volume attached",arg)
            document.getElementById("prereq").style.display = "none";
            document.aws.status.value="Waiting instance info"
-           return ec2.describeInstances({Filters:[
-                {Name:"instance-id",Values:[workflow.instanceid]}] }).promise()
-         }).then(arg=>{
-           console.log("found instance ",arg)
-           document.aws.status.value="Instance is available"       
-           var instance = arg.Reservations[0].Instances[0]
-
-           console.log("instance ",instance.InstanceId,
-            instance.BlockDeviceMappings[1].Ebs.VolumeId,
-            instance.BlockDeviceMappings[1].Ebs.Status)
-           document.aws.instanceIP.value=instance.PublicIpAddress
-           var link="https://"+instance.PublicIpAddress+":8888"
-           document.getElementById("jupyterlink").href=link; 
-           document.getElementById("instructions").style.display = "block";
+           return refresh()
          }).catch(arg=>{
            document.aws.status.value=arg.message
            console.log("Workflow fail ",arg)
@@ -283,48 +270,158 @@ function launch() {
 function terminate() {
     try {
        var ec2=new AWS.EC2(options())
-       document.aws.status.value="Cancel Request"
-       console.log("Cancel Spot request ")
-       return ec2.cancelSpotInstanceRequests({SpotInstanceRequestIds: [document.aws.requestid.value]}).promise().then(arg=>{
-         console.log("Spot request cancelled ",arg)
-          document.aws.status.value="Cancelled"
-         if (document.aws.instanceid.value != "") {
-           document.aws.status.value="Terminating"
-           console.log("terminate instance")
-           return ec2.terminateInstances({InstanceIds: [document.aws.instanceid.value] }).promise().then(arg=>{
-             console.log("wait for terminate instance")
-             document.aws.status.value="Wait for termination"
-             return ec2.waitFor('instanceTerminated',{InstanceIds: [document.aws.instanceid.value]}).promise().then(arg=>{
-               console.log("terminated instance")
-               document.aws.status.value="Terminated"
-             })
+       if(document.aws.requestid.value!=""){
+         document.aws.status.value="Cancel Request"
+         console.log("Cancel Spot request ")
+         return ec2.cancelSpotInstanceRequests({SpotInstanceRequestIds: [document.aws.requestid.value]}).promise().then(arg=>{
+           console.log("Spot request cancelled ",arg)
+            document.aws.status.value="Cancelled"         
+         })
+       }
+       if (document.aws.instanceid.value != "") {
+         document.aws.status.value="Terminating"
+         console.log("terminate instance")
+         return ec2.terminateInstances({InstanceIds: [document.aws.instanceid.value] }).promise().then(arg=>{
+           console.log("wait for terminate instance")
+           document.aws.status.value="Wait for termination"
+           return ec2.waitFor('instanceTerminated',{InstanceIds: [document.aws.instanceid.value]}).promise().then(arg=>{
+             console.log("terminated instance")
+             document.aws.status.value="Terminated"
+             refresh()
            })
-         }
-       })
+         })
+       }
+
     } catch (ase) {
         console.log(ase);
     }
 
 }
 
+function setvolumeid(arg){
+  document.aws.instancetype.value=arg
+}
+function refresh() {
+    options()
+    try {
+       var ec2=new AWS.EC2(options())
+       var promises=[]
+       if (document.aws.availabilityzone.value!=""){
+          console.log("Lookup price history")
+          promises.push(ec2.describeSpotPriceHistory({AvailabilityZone:document.aws.availabilityzone.value,
+              InstanceTypes:instancetypes,  ProductDescriptions: ["Linux/UNIX (Amazon VPC)"],}).promise()
+            .then(arg=>{
+               console.log("Got price history",arg)
+               var div = document.getElementById("prices");
+               while (div.hasChildNodes()) {div.removeChild(div.lastChild);}
+               instancetypes.forEach((instancetype)=> {
+                 for (idx = 0; idx < arg.SpotPriceHistory.length; idx++)  {
+                   var spot=arg.SpotPriceHistory[idx]
+                   if (spot.InstanceType == instancetype) {
+                      var b = document.createElement('button');
+                      b.setAttribute('content', 'test content');
+                      b.setAttribute('class', 'btn');
+                      b.innerHTML = instancetype+"<br>"+spot.SpotPrice;
+                      b.setAttribute( "onClick", "javascript: document.aws.instancetype.value='"+instancetype+"';" );
+                      div.appendChild(b);
+                      break
+                    }
+                 }
+                 //var spot=arg.SpotPriceHistory.any((a)=>{return a.InstanceType==instancetype})
+               })
+             })
+           )
+      }
+      if(document.aws.availabilityzone.value!="") {
+        console.log("Lookup instances")
+        promises.push(ec2.describeInstances({Filters:[
+                {Name:"instance-state-name",Values:["pending","running"]}] }).promise()              
+         .then(arg=>{
+           console.log("got instance list",arg)
+           var div = document.getElementById("instances");
+           while (div.hasChildNodes()) {div.removeChild(div.lastChild);}
+           arg.Reservations.forEach((reservation)=>{
+                reservation.Instances.forEach((instance)=>{
+                  var b = document.createElement('button');
+                  b.setAttribute('content', 'test content');
+                  b.setAttribute('class', 'btn');
+                  b.innerHTML = instance.InstanceId+"<br>"+instance.InstanceType;
+                  b.setAttribute( "onClick", "javascript: document.aws.instanceid.value='"+instance.InstanceId+"';refresh();" );
+                  div.appendChild(b);
+                })
 
+           })
+         }))
+       }
+       if (document.aws.availabilityzone.value!=""){ 
+           console.log("lookup volume list")      
+           promises.push( ec2.describeVolumes({}).promise() 
+             .then(arg=>{
+               console.log("got volume list",arg)
+               var div = document.getElementById("volumes");
+               while (div.hasChildNodes()) {div.removeChild(div.lastChild);}
+               arg.Volumes.forEach((volume)=>{
+                    var b = document.createElement('button');
+                    b.setAttribute('content', 'test content');
+                    b.setAttribute('class', 'btn');
+                    b.innerHTML = volume.VolumeId+"<br>"+volume.Size+"GB<br>"
+                    b.setAttribute( "onClick", "javascript: document.aws.volumeid.value='"+volume.VolumeId+"';" );
+                    div.appendChild(b);
+               })
+         })) 
+       }
 
+       if(document.aws.availabilityzone.value!="" && document.aws.instanceid.value) {
+           console.log("lookup instance") 
+           promises.push( ec2.describeInstances({Filters:[
+                {Name:"instance-id",Values:[document.aws.instanceid.value]}]}).promise()
+                .then(arg=>{
+                   console.log("found instance ",arg)
+                   var instance = arg.Reservations[0].Instances[0]
+                   console.log("instance ",instance.InstanceId,
+                    instance.BlockDeviceMappings[1].Ebs.VolumeId,
+                    instance.BlockDeviceMappings[1].Ebs.Status)
+                   document.aws.instanceIP.value=instance.PublicIpAddress
+                   var link="https://"+instance.PublicIpAddress+":8888"
+                   document.getElementById("jupyterlink").href=link; 
+                   document.getElementById("instructions").style.display = "block";
+                   document.aws.status.value="Instance is available" 
+                })
+           )
+         }
 
+         return Promise.all(promises).catch(arg=>{
+           document.aws.status.value=arg.message
+           console.log("Workflow fail ",arg)
+           return 
+          })         
+
+    } catch (ase) {
+        console.log("failed to launch ", ase);
+        document.aws.status.value=ase.message
+    }
+}
 </script>
-<H2>
-EastBayML
-</H2>
-<H2>
+<H3>
+EastBayML - 
 Jupyter Spot Instance Launcher
-</H2>
+</H3>
 <div id="container">
-<div id="status" style="display:none;" >Status
+<div id="status" style="display:block;" >
+<h4>Spot prices:<br></h4>
+<div id="prices"></div>
+<h4>Available Volumes:<br></h4>
+<div id="volumes"></div>
+<h4>Active Instances:<br></h4>
+<div id="instances"></div>
 <br>
-Stuff here
+<div style="position:relative; bottom:0px;">
+<button onclick="refresh()">refresh</button>
+</div>
 </div>
 <div id="content">
 <form name="aws">
-<br>
+
   accessKeyId:
   <input type="text" name="accessKeyId" size="25"><br>
   secretAccessKey:
@@ -338,7 +435,9 @@ Stuff here
   <br>
   AMI ImageId:
   <input type="text" name="imageid" value="ami-c23978a2"><br>
-
+<br>
+  InstanceType:
+  <input type="text" name="instancetype" value="g2.2xlarge"><br>
   SpotPrice:
   <input type="text" name="spotprice" value="0.15"><input type="text" name="spotpricehistory" style="border:none" size="25" readonly><br> 
 <br>
