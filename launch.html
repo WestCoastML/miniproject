@@ -269,19 +269,20 @@ function launch() {
 
 function terminate() {
     try {
+      var promises=[]
        var ec2=new AWS.EC2(options())
        if(document.aws.requestid.value!=""){
          document.aws.status.value="Cancel Request"
          console.log("Cancel Spot request ")
-         return ec2.cancelSpotInstanceRequests({SpotInstanceRequestIds: [document.aws.requestid.value]}).promise().then(arg=>{
+         promises.push( ec2.cancelSpotInstanceRequests({SpotInstanceRequestIds: [document.aws.requestid.value]}).promise().then(arg=>{
            console.log("Spot request cancelled ",arg)
             document.aws.status.value="Cancelled"         
-         })
+         }))
        }
        if (document.aws.instanceid.value != "") {
          document.aws.status.value="Terminating"
          console.log("terminate instance")
-         return ec2.terminateInstances({InstanceIds: [document.aws.instanceid.value] }).promise().then(arg=>{
+         promises.push(ec2.terminateInstances({InstanceIds: [document.aws.instanceid.value] }).promise().then(arg=>{
            console.log("wait for terminate instance")
            document.aws.status.value="Wait for termination"
            return ec2.waitFor('instanceTerminated',{InstanceIds: [document.aws.instanceid.value]}).promise().then(arg=>{
@@ -289,9 +290,9 @@ function terminate() {
              document.aws.status.value="Terminated"
              refresh()
            })
-         })
+         }))
        }
-
+       return Promise.all(promises)
     } catch (ase) {
         console.log(ase);
     }
